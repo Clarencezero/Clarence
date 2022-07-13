@@ -21,6 +21,7 @@ import org.apache.flink.core.fs.FSDataOutputStream;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.formats.avro.AvroBuilder;
 import org.apache.flink.formats.avro.AvroWriterFactory;
+import org.apache.flink.formats.avro.typeutils.GenericRecordAvroTypeInfo;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
@@ -79,10 +80,11 @@ class FileConnectorTest {
         DataStreamSource<MyGenericRecord> personSourceStream = env.addSource(new SourceFunction<MyGenericRecord>() {
             @Override
             public void run(SourceContext<MyGenericRecord> ctx) throws Exception {
+                int count = 1;
                 while (true) {
                     MyGenericRecord user1 = new MyGenericRecord(schemaStr);
                     user1.put("name", "Alyssa");
-                    user1.put("age", 256);
+                    user1.put("age", count++);
                     ctx.collect(user1);
                     TimeUnit.SECONDS.sleep(1);
                 }
@@ -92,8 +94,8 @@ class FileConnectorTest {
             public void cancel() {
 
             }
-        });
-        env.enableCheckpointing(100);
+        }, new MyGenericRecordAvroTypeInfo(schema));
+        env.enableCheckpointing(10000);
         AvroWriterFactory<MyGenericRecord> factory = new AvroWriterFactory<>((AvroBuilder<MyGenericRecord>) out -> {
             DatumWriter<MyGenericRecord> datumWriter = new ReflectDatumWriter<>(schema);
             DataFileWriter<MyGenericRecord> dataFileWriter = new DataFileWriter<>(datumWriter);
@@ -106,15 +108,47 @@ class FileConnectorTest {
     }
 
     @Test
+    void testDeWithSchema() throws Exception {
+        String schemaStr = "{\"namespace\": \"com.clarence.Person\",\n" +
+                " \"type\": \"record\",\n" +
+                " \"name\": \"Person\",\n" +
+                " \"fields\": [\n" +
+                "     {\"name\": \"name\", \"type\": \"string\"},\n" +
+                "     {\"name\": \"age\",  \"type\": [\"int\", \"null\"]}\n" +
+                " ]\n" +
+                "}";
+        File file = new File("G:\\01_Data\\FlinkTest\\2022-07-13--23\\part-4b4f61ee-fcc2-4cdf-960e-83de87a27c82-1");
+        Schema schema = new Schema.Parser().parse(schemaStr);
+        DatumReader<GenericRecord> datumReader = new GenericDatumReader<>(schema);
+        DataFileReader<GenericRecord> dataFileReader = new DataFileReader<>(file, datumReader);
+        GenericRecord user = null;
+        while (dataFileReader.hasNext()) {
+            user = dataFileReader.next(user);
+            System.out.println(user);
+        }
+    }
+
+
+    @Test
     void testAvro() throws Exception {
+        String schemaStr = "{\"namespace\": \"com.clarence.Person\",\n" +
+                " \"type\": \"record\",\n" +
+                " \"name\": \"Person\",\n" +
+                " \"fields\": [\n" +
+                "     {\"name\": \"name\", \"type\": \"string\"},\n" +
+                "     {\"name\": \"age\",  \"type\": [\"int\", \"null\"]}\n" +
+                " ]\n" +
+                "}";
+        Schema schema = new Schema.Parser().parse(schemaStr);
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        DataStreamSource<Person> personSourceStream = env.addSource(new SourceFunction<Person>() {
+        DataStreamSource<GenericRecord> personSourceStream = env.addSource(new SourceFunction<GenericRecord>() {
             @Override
-            public void run(SourceContext<Person> ctx) throws Exception {
+            public void run(SourceContext<GenericRecord> ctx) throws Exception {
                 while (true) {
-                    Person person = new Person("test", 1);
-                    ctx.collect(person);
-                    TimeUnit.SECONDS.sleep(1);
+                    GenericRecord user1 = new GenericData.Record(schema);
+                    user1.put("name", "Alyssa");
+                    user1.put("favorite_number", 256);
+                    ctx.collect(user1);
                 }
             }
 
@@ -124,14 +158,13 @@ class FileConnectorTest {
             }
         });
         env.enableCheckpointing(100);
-        AvroWriterFactory<Person> factory = new AvroWriterFactory<>((AvroBuilder<Person>) out -> {
-            Schema schema = ReflectData.get().getSchema(Person.class);
-            DatumWriter<Person> datumWriter = new ReflectDatumWriter<>(schema);
-            DataFileWriter<Person> dataFileWriter = new DataFileWriter<>(datumWriter);
+        AvroWriterFactory<GenericRecord> factory = new AvroWriterFactory<>((AvroBuilder<GenericRecord>) out -> {
+            DatumWriter<GenericRecord> datumWriter = new ReflectDatumWriter<>(schema);
+            DataFileWriter<GenericRecord> dataFileWriter = new DataFileWriter<>(datumWriter);
             dataFileWriter.create(schema, out);
             return dataFileWriter;
         });
-        FileSink<Person> fileSink = FileSink.forBulkFormat(getLocalPath("G:\\01_Data\\FlinkTest"), factory).build();
+        FileSink<GenericRecord> fileSink = FileSink.forBulkFormat(getLocalPath("G:\\01_Data\\FlinkTest"), factory).build();
         personSourceStream.sinkTo(fileSink);
         env.execute();
     }
@@ -177,27 +210,7 @@ class FileConnectorTest {
         }
     }
 
-    @Test
-    void testDeWithSchema() throws Exception {
-        String schemaStr = "{\"namespace\": \"com.clarence.Person\",\n" +
-                " \"type\": \"record\",\n" +
-                " \"name\": \"Person\",\n" +
-                " \"fields\": [\n" +
-                "     {\"name\": \"name\", \"type\": \"string\"},\n" +
-                "     {\"name\": \"age\",  \"type\": [\"int\", \"null\"]}\n" +
-                " ]\n" +
-                "}";
-        File file = new File("G:\\01_Data\\FlinkTest\\2022-07-13--23\\part-44c5d165-c6d5-42bf-aea7-4102a7e793b8-0");
-        Schema schema = new Schema.Parser().parse(schemaStr);
-        DatumReader<GenericRecord> datumReader = new GenericDatumReader<>(schema);
-        DataFileReader<GenericRecord> dataFileReader = new DataFileReader<>(file, datumReader);
-        GenericRecord user = null;
-        while (dataFileReader.hasNext()) {
-            user = dataFileReader.next(user);
-            System.out.println(user);
-        }
 
-    }
 
     @Test
     void testAvroGenericDataRecord() throws Exception {
